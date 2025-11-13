@@ -9,3 +9,7 @@
 <h2> É possível também após a analise da IA gerar um relatório simples</h2>
 
 <h2> É possível Enviar um arquivo para análise no Hybrid Analysis, no entanto essa função não foi adequadamente desenvolvida, talvez futuramente, mas um link é gerado para o relatório do arquivo. </h2>
+
+
+<h3> Ah, quase esqueci, ícone super original do App: </h3>
+<img width="245" height="190" alt="image" src="https://github.com/user-attachments/assets/d5b50648-87ff-49ee-bcae-9e0620482feb" />
