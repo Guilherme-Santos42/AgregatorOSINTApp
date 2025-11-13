@@ -16,21 +16,22 @@ import re
 import os
 import sys
 from typing import Dict, Any, Optional
+import base64 
 
 # --- CONSTANTES E CONFIGURAÇÃO DE CHAVES DE API ---
 
-# Removidos placeholders de chaves em plaintext, conforme boas práticas de segurança.
-# O código agora busca APENAS variáveis de ambiente. Se não configuradas, retorna ''.
-VT_API_KEY = os.environ.get('')
-SHODAN_API_KEY = os.environ.get('SHODAN_API_KEY')
-ABUSEIPDB_API_KEY = os.environ.get('ABUSEIPDB_API_KEY')
-PULSEDIVE_API_KEY = os.environ.get('PULSEDIVE_API_KEY')
-GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
-URLSCAN_API_KEY = os.environ.get('URLSCAN_API_KEY')
-HA_API_KEY = os.environ.get('HA_API_KEY')
+# Todas as chaves agora usam .strip() para remover espaços em branco
+VT_API_KEY = os.environ.get('VT_API_KEY').strip()
+SHODAN_API_KEY = os.environ.get('SHODAN_API_KEY').strip()
+ABUSEIPDB_API_KEY = os.environ.get('ABUSEIPDB_API_KEY').strip()
+PULSEDIVE_API_KEY = os.environ.get('PULSEDIVE_API_KEY').strip()
+GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY').strip()
+URLSCAN_API_KEY = os.environ.get('URLSCAN_API_KEY').strip()
+HA_API_KEY = os.environ.get('HA_API_KEY').strip()
+GN_API_KEY = os.environ.get('GN_API_KEY').strip() 
 
 # Configurações globais
-VERIFY_SSL = True
+VERIFY_SSL = False
 HA_USER_AGENT = 'AGREGATOR' # User-Agent Específico para HA
 MAX_NVD_DETAILS = 5 # Limite de detalhes de CVEs para consulta NVD
 
@@ -62,6 +63,7 @@ def _api_request(url: str, method: str = 'GET', headers: Optional[Dict[str, str]
         if method == 'GET':
             response = requests.get(url, headers=headers, params=params, timeout=timeout, verify=VERIFY_SSL)
         elif method == 'POST':
+            # Nota: files=files permite lidar com requisições multipart/form-data (como o HA)
             response = requests.post(url, headers=headers, params=params, json=json_data, files=files, timeout=timeout, verify=VERIFY_SSL)
         else:
             return {"Status": f"ERRO INTERNO: Método HTTP {method} não suportado."}
@@ -255,11 +257,12 @@ def search_shodan(observable):
         "Portas Abertas (Shodan)": ports,
     }
 
-# Função search_internetdb (AGORA COM DETALHES DE MÚLTIPLAS CVEs)
+# Função search_internetdb (MANTIDA APENAS PARA A CONSULTA DE DADOS VALIOSA)
 def search_internetdb(observable):
     if not is_ip(observable):
         return {"Status": "Não aplicável: InternetDB suporta apenas Endereços IP."}
         
+    # URL CORRETA, não requer chave.
     url = f"https://internetdb.shodan.io/{observable}"
     
     response = _api_request(url, timeout=10)
@@ -336,12 +339,13 @@ def search_abuseipdb(observable):
         "Domínio Associado": data.get('domain', 'N/A')
     }
 
-# Função search_pulsedive
+# Função search_pulsedive (LÓGICA FUNCIONAL DA VERSÃO 2)
 def search_pulsedive(observable):
     if not PULSEDIVE_API_KEY:
         return {"Status": "ERRO: Chave de API do Pulsedive não configurada. Verifique a variável de ambiente PULSEDIVE_API_KEY."}
         
     url = 'https://pulsedive.com/api/info.php'
+    # LÓGICA FUNCIONAL: Parâmetros enviados como URL params, incluindo a chave API.
     params = {'indicator': observable, 'key': PULSEDIVE_API_KEY, 'pretty': 1}
     
     response = _api_request(url, params=params, timeout=10)
@@ -365,7 +369,7 @@ def search_pulsedive(observable):
         "Última Varredura": data.get('last_scan', 'N/A') 
     }
 
-# Função search_greynoise
+# Função search_greynoise (LÓGICA FUNCIONAL DA VERSÃO 2 - API Community)
 def search_greynoise(observable):
     if not is_ip(observable):
         return {"Status": "Não aplicável: GreyNoise Community suporta apenas Endereços IP."}
@@ -406,7 +410,7 @@ def search_greynoise(observable):
     else:
         return {"Status": "Nenhuma informação detalhada encontrada no GreyNoise."}
 
-# Função search_urlscan
+# Função search_urlscan (Mantida)
 def search_urlscan(observable, update_callback=None):
     if not URLSCAN_API_KEY:
         return {"Status": "ERRO: Chave de API do URLScan.io não configurada. Verifique a variável de ambiente URLSCAN_API_KEY."}
@@ -473,8 +477,6 @@ def search_urlscan(observable, update_callback=None):
     
 # --- FUNÇÕES HYBRID ANALYSIS (ARQUIVO) ---
 
-# --- FUNÇÕES HYBRID ANALYSIS (ARQUIVO) ---
-
 def _get_ha_report(sha256, ha_headers):
     """Busca o relatório final, focando no link público robusto."""
     
@@ -516,7 +518,7 @@ def _get_ha_report(sha256, ha_headers):
         "AVISO": "Análise completa pode levar minutos para estar disponível.",
     }
 
-# ESTA É A FUNÇÃO CORRIGIDA
+# ESTA É A FUNÇÃO search_hybrid_analysis
 def search_hybrid_analysis(file_path, update_callback=None):
     if not os.path.isfile(file_path):
         return {"Status": f"ERRO: Arquivo não encontrado em {file_path}"}
@@ -558,9 +560,6 @@ def search_hybrid_analysis(file_path, update_callback=None):
     # 2. Submissão do arquivo (se não foi encontrado ou falha de lookup)
     log(f"📤 Hash não encontrado. Submetendo arquivo '{file_name}' para análise...")
     
-    # Prepara o 'data' para ser enviado como parte do multipart/form-data
-    # A API espera que isso seja um JSON que é passado como campo 'data' (string)
-    # Aqui, requests.post irá serializar e empacotar isso corretamente.
     submission_data = {
         "environment_id": "100", # ID 100 é o Win 7 64-bit default
         # Adicione outros parâmetros se necessário, como 'allow_community_access'
@@ -568,38 +567,18 @@ def search_hybrid_analysis(file_path, update_callback=None):
     
     files_data = {"file": (file_name, file_bytes)}
     
-    # O método 'requests.post' do Python envia 'data' e 'files' como 'multipart/form-data'.
-    # O Hybrid Analysis espera o JSON de configuração no campo 'data'.
-    # O wrapper _api_request deve ser ajustado para aceitar um 'data' de formulário ou usar requests.post diretamente.
-    
-    # AJUSTE NO WRAPPER NECESSÁRIO AQUI:
-    # A sua função _api_request aceita 'json_data' e 'files' mas não 'data' (form/text).
-    # Vamos reescrever esta seção para usar requests.post diretamente, contornando a limitação do wrapper para este caso POST específico de multipart/form-data que requer 'data' (string) E 'files'.
-    
     try:
         log("Utilizando requests.post para multipart/form-data...")
-        # A chave 'data' aqui não é o json_data do wrapper, mas sim a data do formulário.
-        # Hybrid Analysis exige que os parâmetros de submissão (environment_id) sejam JSON stringificado
-        # e passado como um campo 'data' na requisição multipart/form-data.
         
-        # NOTE: Sua função _api_request não suporta a estrutura de dados necessária para este POST específico.
-        # Modificamos a chamada abaixo para usar requests.post diretamente, mas **o mais correto
-        # seria atualizar _api_request para lidar com o parâmetro `data` do requests.post**.
-        # Se você deseja manter a consistência do wrapper, a **alternativa** é garantir que `_api_request`
-        # envie `json_data` *somente* se `files` for `None`, e enviar `data` e `files` se ambos existirem.
+        # Removemos o content-type e accept para o requests tratar automaticamente o multipart/form-data
+        temp_headers = {k: v for k, v in ha_headers.items() if k.lower() not in ('accept', 'content-type')}
         
-        # *** Implementação Direta do Requests (SOLUÇÃO MAIS RÁPIDA) ***
-        # Removemos o content-type para o requests tratar automaticamente o multipart/form-data
-        temp_headers = {k: v for k, v in ha_headers.items() if k.lower() != 'accept'}
-        
-        # Convertemos o JSON de configuração para string, conforme esperado pela API do HA no campo 'data'
-        submission_json_string = json.dumps(submission_data)
-        
-        # O campo 'data' no requests.post aceita um dicionário de strings para dados do formulário
+        # CORREÇÃO CRUCIAL: Passa o dicionário de dados (submission_data) diretamente 
+        # para 'data'. O requests lida com a formatação multipart/form-data corretamente.
         response_post = requests.post(
             submit_url,
-            headers=temp_headers, # Aqui só temos api-key e User-Agent
-            data={"json": submission_json_string}, # O campo de dados JSON deve ser chamado 'json' ou 'data' no HA
+            headers=temp_headers, 
+            data=submission_data, 
             files=files_data,
             timeout=60,
             verify=VERIFY_SSL,
@@ -619,18 +598,18 @@ def search_hybrid_analysis(file_path, update_callback=None):
              # Retornamos o link, mesmo com erro 400, pois é o que o usuário deseja
              log(f"AVISO: Submissão retornou ERRO 400. Detalhe: {error_msg}. Link é válido.")
              return {
-                "Status": f"AVISO (400): Submissão falhou (Bad Request). Link do Relatório foi extraído.",
-                "SHA256": sha256,
-                "Link do Relatório": robust_link_on_submit,
-                "Detalhe do Erro HA": error_msg,
-                "Aviso": "O link acima é o mais robusto, verifique se a submissão está em fila.",
-            }
+                 "Status": f"AVISO (400): Submissão falhou (Bad Request). Link do Relatório foi extraído.",
+                 "SHA256": sha256,
+                 "Link do Relatório": robust_link_on_submit,
+                 "Detalhe do Erro HA": error_msg,
+                 "Aviso": "O link acima é o mais robusto, verifique se a submissão está em fila.",
+             }
         else:
              return {
-                "Status": f"ERRO na submissão (Status: {response_post.status_code}). Detalhe: {response_post.text[:100]}",
-                "SHA256": sha256,
-                "Link do Relatório": robust_link_on_submit,
-            }
+                 "Status": f"ERRO na submissão (Status: {response_post.status_code}). Detalhe: {response_post.text[:100]}",
+                 "SHA256": sha256,
+                 "Link do Relatório": robust_link_on_submit,
+             }
 
     except Exception as e:
         return {
@@ -652,7 +631,17 @@ def search_hybrid_analysis(file_path, update_callback=None):
         "Aviso": "O link acima é o mais robusto. O relatório final estará ativo em breve.",
     }
 
-# Função generate_ai_analysis
+# Função auxiliar para codificação Base64 (necessária para o link Pulsedive)
+def _encode_to_base64(text):
+    """Auxiliar para codificar texto simples em Base64."""
+    try:
+        # Codifica a string para bytes, aplica Base64, e decodifica de volta para string
+        return base64.b64encode(text.encode('utf-8')).decode('utf-8')
+    except:
+        return text # Retorna o texto original em caso de falha de codificação
+
+
+# Função generate_ai_analysis (Mantida)
 def generate_ai_analysis(observable, results):
     if not GEMINI_API_KEY:
         return {"Status": "ERRO: Chave de API do Gemini não configurada para análise de IA. Verifique a variável de ambiente GEMINI_API_KEY."}
@@ -692,27 +681,31 @@ Dados Brutos de OSINT (JSON):
         )
         return response.text
     except APIError as e:
+        # A API Gemini falhou na Versão 1, mantida para diagnóstico.
         return f"ERRO na API do Gemini: Verifique sua chave ou limite de uso. Detalhe: {e}"
     except Exception as e:
         return {"Status": f"ERRO inesperado na análise de IA: {e}"}
 
-# --- FUNÇÃO PARA GERAR OS LINKS ---
+# Função para gerar os links
 def generate_osint_links(observable):
+    # Usa o Base64 para o link de navegação, conforme a necessidade do Pulsedive no browser
+    pulsedive_ioc = _encode_to_base64(observable) 
+    
     links = {
         "VirusTotal": f"https://www.virustotal.com/gui/search/{observable}",
-        "GreyNoise": f"https://viz.greynoise.io/indicator/{observable}",
+        # GREYNOISE: Link de visualização web (correto)
+        "GreyNoise": f"https://viz.greynoise.io/ip/{observable}", 
         "URLScan": f"https://urlscan.io/search/#{requests.utils.quote(observable)}",
         "Shodan": f"https://www.shodan.io/host/{observable}" if is_ip(observable) else None,
         "AbuseIPDB": f"https://www.abuseipdb.com/check/{observable}" if is_ip(observable) else None,
-        "Pulsedive": f"https://pulsedive.com/indicator/?ioc={observable}",
+        # PULSEDIVE: Link de visualização web com Base64 (necessário para o navegador)
+        "Pulsedive": f"https://pulsedive.com/indicator/?ioc={pulsedive_ioc}", 
         "Whois": f"https://www.whois.com/whois/{observable}",
-        "InternetDB": f"https://internetdb.shodan.io/{observable}" if is_ip(observable) else None 
+        # INTERNETDB: Removido do menu de links rápidos.
     }
     return links
 
 # --- CLASSE DA INTERFACE GRÁFICA (CustomTkinter) ---
-
-
 
 class OSINTApp(ctk.CTk):
     def __init__(self):
@@ -729,12 +722,9 @@ class OSINTApp(ctk.CTk):
             icon_path = resource_path("icone2.ico")
             
             # 2. Configurar o ícone da janela/aplicativo
-            # No Windows, o self.iconbitmap() é a maneira correta.
-            # O PyInstaller garante que 'icone2.ico' está acessível via 'resource_path'
             self.iconbitmap(icon_path)
             
         except tk.TclError as e:
-            # Se houver erro, a falha é capturada, mas a execução continua.
             print(f"Aviso: Não foi possível carregar o ícone. Erro: {e}")
         except Exception as e:
             print(f"Erro inesperado ao configurar o ícone: {e}")
@@ -744,11 +734,6 @@ class OSINTApp(ctk.CTk):
         self.grid_columnconfigure(0, weight=0)
         self.grid_rowconfigure(3, weight=0)
         
-
-    
-                
-                
-
         # 1. Cabeçalho
         self.header_label = ctk.CTkLabel(self, text="🔒 IMR - TISAFE", font=ctk.CTkFont(family="Arial", size=28, weight="bold"), text_color="#FBC02D")
         self.header_label.grid(row=0, column=0, pady=(10, 10))
@@ -819,7 +804,7 @@ class OSINTApp(ctk.CTk):
             "HybridAnalysis": self._create_output_textbox(self.tabview.tab("HybridAnalysis")), 
             "Análise IA": self._create_output_textbox(self.tabview.tab("Análise IA")),
         }
-        
+    
     
     def _create_output_textbox(self, parent_tab):
         parent_tab.grid_columnconfigure(0, weight=1)
@@ -947,7 +932,7 @@ class OSINTApp(ctk.CTk):
             results[api_name] = api_func(observable)
             self.after(0, lambda: self._update_status_line()) # Atualiza o status de progresso
 
-        # 💡 NOVO: Executa a busca de CVEs se for um IP (usando InternetDB)
+        # 💡 Busca de CVEs: Mantida a busca de dados de InternetDB, pois é valiosa para o relatório.
         if is_ip(observable):
             self.after(0, lambda: self.append_output(self.output_map["Geral"], f"\n• Processando InternetDB/CVE (Busca detalhada NVD de {MAX_NVD_DETAILS} CVEs)..."))
             results["InternetDB/CVE"] = search_internetdb(observable)
@@ -991,7 +976,7 @@ class OSINTApp(ctk.CTk):
             if api_name == "InternetDB/CVE":
                 if 'Status' in data and 'ERRO' in data['Status']:
                     output_tab += f"Status: {data['Status']}\n"
-                    status_geral = f" ERRO: {data['Status']}"
+                    status_geral = f"❌ ERRO: {data['Status']}"
                 elif 'Status' in data and 'Não aplicável' in data['Status']:
                     output_tab += f"Status: {data['Status']}\n"
                     status_geral = "⚠️ Não aplicável (Não é IP)."
@@ -1189,7 +1174,7 @@ class OSINTApp(ctk.CTk):
             self.append_output(self.output_map["Geral"], "\n✅ Análise de IA concluída. Verifique a aba 'Análise IA'.")
         else:
             status_msg = analysis_text.get('Status', 'ERRO na análise de IA.') if isinstance(analysis_text, dict) else analysis_text
-            self.append_output(self.output_map["Geral"], f"\n {status_msg}")
+            self.append_output(self.output_map["Geral"], f"\n❌ {status_msg}")
             self.save_ai_report_button.configure(state="disabled")
 
     def save_results_as_json(self):
@@ -1211,7 +1196,7 @@ class OSINTApp(ctk.CTk):
                     json.dump(final_data, f, ensure_ascii=False, indent=4)
                 self.append_output(self.output_map["Geral"], f"\n✅ Arquivo JSON salvo com sucesso: {file_path}")
             except Exception as e:
-                self.append_output(self.output_map["Geral"], f"\n ERRO ao salvar JSON: {e}")
+                self.append_output(self.output_map["Geral"], f"\n❌ ERRO ao salvar JSON: {e}")
 
     def save_ai_report(self):
         if not self.current_ai_report:
@@ -1231,7 +1216,7 @@ class OSINTApp(ctk.CTk):
                     f.write(self.current_ai_report)
                 self.append_output(self.output_map["Geral"], f"\n✅ Relatório de IA salvo com sucesso: {file_path}")
             except Exception as e:
-                self.append_output(self.output_map["Geral"], f"\n ERRO ao salvar Relatório de IA: {e}")
+                self.append_output(self.output_map["Geral"], f"\n❌ ERRO ao salvar Relatório de IA: {e}")
 
 
 if __name__ == "__main__":
